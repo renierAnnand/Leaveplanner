@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta
+import calendar
 import uuid
 
 def init_session_state():
@@ -76,6 +77,42 @@ def load_mock_data():
                 "total_days": 5,
                 "submittedAt": "2024-12-01T10:00:00Z",
                 "managerComments": ""
+            },
+            "req002": {
+                "id": "req002",
+                "employeeId": "emp001",
+                "status": "approved",
+                "type": "annual",
+                "start_date": "2025-01-15",
+                "end_date": "2025-01-17",
+                "reason": "Personal time",
+                "total_days": 3,
+                "submittedAt": "2024-11-15T10:00:00Z",
+                "managerComments": "Approved"
+            },
+            "req003": {
+                "id": "req003",
+                "employeeId": "emp002",
+                "status": "approved",
+                "type": "sick",
+                "start_date": "2024-12-10",
+                "end_date": "2024-12-12",
+                "reason": "Medical appointment",
+                "total_days": 3,
+                "submittedAt": "2024-12-05T10:00:00Z",
+                "managerComments": "Get well soon"
+            },
+            "req004": {
+                "id": "req004",
+                "employeeId": "mgr001",
+                "status": "approved",
+                "type": "annual",
+                "start_date": "2025-01-20",
+                "end_date": "2025-01-24",
+                "reason": "Conference attendance",
+                "total_days": 5,
+                "submittedAt": "2024-12-01T10:00:00Z",
+                "managerComments": "Auto-approved"
             }
         },
         "settings": {
@@ -103,6 +140,206 @@ def calculate_workdays(start_date, end_date):
             workdays += 1
         current_date += timedelta(days=1)
     return workdays
+
+def get_leave_for_date(check_date, user_id=None):
+    """Get leave information for a specific date"""
+    date_str = check_date.strftime("%Y-%m-%d")
+    leave_info = []
+    
+    for req in st.session_state.data["leaveRequests"].values():
+        if user_id and req["employeeId"] != user_id:
+            continue
+            
+        start_date = datetime.strptime(req["start_date"], "%Y-%m-%d").date()
+        end_date = datetime.strptime(req["end_date"], "%Y-%m-%d").date()
+        
+        if start_date <= check_date <= end_date:
+            employee = st.session_state.data["users"][req["employeeId"]]
+            leave_info.append({
+                "employee": employee["name"],
+                "type": req["type"],
+                "status": req["status"],
+                "reason": req["reason"]
+            })
+    
+    return leave_info
+
+def render_calendar_view():
+    st.title("📅 Leave Calendar")
+    
+    # Calendar navigation
+    if 'calendar_year' not in st.session_state:
+        st.session_state.calendar_year = date.today().year
+    if 'calendar_month' not in st.session_state:
+        st.session_state.calendar_month = date.today().month
+    
+    col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+    
+    with col1:
+        if st.button("◀ Year"):
+            st.session_state.calendar_year -= 1
+            st.rerun()
+    
+    with col2:
+        if st.button("◀ Month"):
+            if st.session_state.calendar_month == 1:
+                st.session_state.calendar_month = 12
+                st.session_state.calendar_year -= 1
+            else:
+                st.session_state.calendar_month -= 1
+            st.rerun()
+    
+    with col3:
+        st.markdown("### " + calendar.month_name[st.session_state.calendar_month] + " " + str(st.session_state.calendar_year))
+    
+    with col4:
+        if st.button("Month ▶"):
+            if st.session_state.calendar_month == 12:
+                st.session_state.calendar_month = 1
+                st.session_state.calendar_year += 1
+            else:
+                st.session_state.calendar_month += 1
+            st.rerun()
+    
+    with col5:
+        if st.button("Year ▶"):
+            st.session_state.calendar_year += 1
+            st.rerun()
+    
+    # View options
+    view_mode = st.radio("View Mode:", ["My Leave Only", "Team View (All Users)"], horizontal=True)
+    
+    # Color legend
+    st.markdown("### 🎨 Color Legend")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown("🟡 **Pending** - Awaiting approval")
+    with col2:
+        st.markdown("🟢 **Approved** - Confirmed leave")
+    with col3:
+        st.markdown("🔴 **Rejected** - Denied request")
+    with col4:
+        st.markdown("🔵 **Holiday** - Public holiday")
+    
+    st.markdown("---")
+    
+    # Generate calendar
+    cal = calendar.monthcalendar(st.session_state.calendar_year, st.session_state.calendar_month)
+    
+    # Day headers
+    days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    cols = st.columns(7)
+    for i, day in enumerate(days):
+        with cols[i]:
+            st.markdown("**" + day + "**")
+    
+    # Calendar days
+    for week in cal:
+        cols = st.columns(7)
+        for i, day in enumerate(week):
+            with cols[i]:
+                if day == 0:
+                    st.write("")
+                else:
+                    current_date = date(st.session_state.calendar_year, st.session_state.calendar_month, day)
+                    date_str = current_date.strftime("%Y-%m-%d")
+                    
+                    # Check for holidays
+                    is_holiday = any(h["date"] == date_str for h in st.session_state.data["holidays"])
+                    
+                    # Get leave information
+                    if view_mode == "My Leave Only":
+                        leave_info = get_leave_for_date(current_date, st.session_state.current_user)
+                    else:
+                        leave_info = get_leave_for_date(current_date)
+                    
+                    # Determine background color and content
+                    if is_holiday:
+                        holiday_name = next(h["name"] for h in st.session_state.data["holidays"] if h["date"] == date_str)
+                        st.markdown(
+                            "<div style='background-color: #E3F2FD; border: 2px solid #2196F3; padding: 8px; border-radius: 5px; text-align: center; min-height: 60px;'>"
+                            "<strong>" + str(day) + "</strong><br>"
+                            "<small>🔵 " + holiday_name + "</small>"
+                            "</div>", 
+                            unsafe_allow_html=True
+                        )
+                    elif leave_info:
+                        # Determine color based on status
+                        status_colors = {
+                            "pending": "#FFF3E0",
+                            "approved": "#E8F5E8", 
+                            "rejected": "#FFEBEE"
+                        }
+                        status_borders = {
+                            "pending": "#FF9800",
+                            "approved": "#4CAF50",
+                            "rejected": "#F44336"
+                        }
+                        status_icons = {
+                            "pending": "🟡",
+                            "approved": "🟢",
+                            "rejected": "🔴"
+                        }
+                        
+                        # Use the first leave request's status for coloring
+                        primary_status = leave_info[0]["status"]
+                        bg_color = status_colors.get(primary_status, "#F5F5F5")
+                        border_color = status_borders.get(primary_status, "#CCCCCC")
+                        status_icon = status_icons.get(primary_status, "⚪")
+                        
+                        # Build content
+                        content = "<div style='background-color: " + bg_color + "; border: 2px solid " + border_color + "; padding: 8px; border-radius: 5px; text-align: center; min-height: 60px;'>"
+                        content += "<strong>" + str(day) + "</strong><br>"
+                        
+                        for leave in leave_info:
+                            if view_mode == "Team View (All Users)":
+                                content += "<small>" + status_icons[leave["status"]] + " " + leave["employee"] + "</small><br>"
+                            else:
+                                content += "<small>" + status_icons[leave["status"]] + " " + leave["type"].title() + "</small><br>"
+                        
+                        content += "</div>"
+                        st.markdown(content, unsafe_allow_html=True)
+                        
+                        # Show details on hover/click
+                        if st.button("ℹ️", key="info_" + str(st.session_state.calendar_year) + "_" + str(st.session_state.calendar_month) + "_" + str(day)):
+                            st.session_state.show_date_details = current_date
+                    else:
+                        # Regular day
+                        is_weekend = current_date.weekday() >= 5
+                        bg_color = "#F5F5F5" if is_weekend else "#FFFFFF"
+                        
+                        st.markdown(
+                            "<div style='background-color: " + bg_color + "; border: 1px solid #E0E0E0; padding: 8px; border-radius: 5px; text-align: center; min-height: 60px;'>"
+                            "<strong>" + str(day) + "</strong>"
+                            "</div>", 
+                            unsafe_allow_html=True
+                        )
+    
+    # Show details panel if a date is selected
+    if hasattr(st.session_state, 'show_date_details'):
+        selected_date = st.session_state.show_date_details
+        st.markdown("---")
+        st.subheader("📋 Details for " + selected_date.strftime("%B %d, %Y"))
+        
+        if view_mode == "My Leave Only":
+            leave_details = get_leave_for_date(selected_date, st.session_state.current_user)
+        else:
+            leave_details = get_leave_for_date(selected_date)
+        
+        if leave_details:
+            for leave in leave_details:
+                status_icon = {"pending": "🟡", "approved": "🟢", "rejected": "🔴"}.get(leave["status"], "⚪")
+                
+                with st.expander(status_icon + " " + leave["employee"] + " - " + leave["type"].title()):
+                    st.write("**Status:** " + leave["status"].title())
+                    st.write("**Leave Type:** " + leave["type"].title())
+                    st.write("**Reason:** " + leave["reason"])
+        else:
+            st.info("No leave requests for this date.")
+        
+        if st.button("Close Details"):
+            del st.session_state.show_date_details
+            st.rerun()
 
 def render_dashboard():
     user = st.session_state.data["users"][st.session_state.current_user]
@@ -353,7 +590,7 @@ def main():
     
     st.sidebar.markdown("## 🧭 Navigation")
     
-    nav_options = ["Dashboard", "Plan Leave", "My Requests"]
+    nav_options = ["Dashboard", "Plan Leave", "My Requests", "Calendar View"]
     if user["role"] in ["manager", "admin"]:
         nav_options.append("Team View")
     
@@ -363,6 +600,7 @@ def main():
         "Dashboard": "dashboard",
         "Plan Leave": "plan_leave", 
         "My Requests": "my_requests",
+        "Calendar View": "calendar_view",
         "Team View": "team_view"
     }
     
@@ -376,6 +614,8 @@ def main():
         render_plan_leave()
     elif st.session_state.page == "my_requests":
         render_my_requests()
+    elif st.session_state.page == "calendar_view":
+        render_calendar_view()
     elif st.session_state.page == "team_view":
         render_team_view()
     
