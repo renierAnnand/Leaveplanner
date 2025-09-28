@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
-import json
 from datetime import datetime, date, timedelta
-import calendar
-from typing import List, Dict, Tuple
 import uuid
 
 def init_session_state():
@@ -11,10 +8,6 @@ def init_session_state():
         st.session_state.data = load_mock_data()
     if 'current_user' not in st.session_state:
         st.session_state.current_user = 'emp001'
-    if 'selected_ranges' not in st.session_state:
-        st.session_state.selected_ranges = []
-    if 'temp_range_start' not in st.session_state:
-        st.session_state.temp_range_start = None
 
 def load_mock_data():
     return {
@@ -77,17 +70,10 @@ def load_mock_data():
                 "employeeId": "emp001",
                 "status": "pending",
                 "type": "annual",
-                "ranges": [
-                    {"start": "2024-12-14", "end": "2024-12-15"},
-                    {"start": "2024-12-18", "end": "2024-12-20"}
-                ],
+                "start_date": "2024-12-14",
+                "end_date": "2024-12-20",
                 "reason": "Family vacation",
-                "daysCalculation": {
-                    "workdays": 5,
-                    "bridgeDays": 2,
-                    "excludedHolidays": 0,
-                    "totalDeducted": 7
-                },
+                "total_days": 5,
                 "submittedAt": "2024-12-01T10:00:00Z",
                 "managerComments": ""
             }
@@ -105,48 +91,24 @@ def load_mock_data():
         }
     }
 
-def is_workday(date_obj, settings):
+def is_workday(date_obj):
     day_of_week = date_obj.weekday()
-    day_of_week = (day_of_week + 1) % 7
-    return settings["workweek"]["start"] <= day_of_week <= settings["workweek"]["end"]
+    return day_of_week < 5
 
-def is_holiday(date_obj, holidays):
-    date_str = date_obj.strftime("%Y-%m-%d")
-    return any(h["date"] == date_str for h in holidays)
-
-def calculate_leave_days(ranges, holidays, settings):
-    if not ranges:
-        return {"workdays": 0, "bridgeDays": 0, "excludedHolidays": 0, "totalDeducted": 0}
-    
-    total_workdays = 0
-    bridge_days = 0
-    excluded_holidays = 0
-    
-    for range_data in ranges:
-        start_date = datetime.strptime(range_data["start"], "%Y-%m-%d").date()
-        end_date = datetime.strptime(range_data["end"], "%Y-%m-%d").date()
-        
-        current_date = start_date
-        while current_date <= end_date:
-            if is_workday(current_date, settings):
-                if not (settings["excludeHolidays"] and is_holiday(current_date, holidays)):
-                    total_workdays += 1
-                elif settings["excludeHolidays"] and is_holiday(current_date, holidays):
-                    excluded_holidays += 1
-            current_date += timedelta(days=1)
-    
-    return {
-        "workdays": total_workdays,
-        "bridgeDays": bridge_days,
-        "excludedHolidays": excluded_holidays,
-        "totalDeducted": total_workdays + bridge_days
-    }
+def calculate_workdays(start_date, end_date):
+    workdays = 0
+    current_date = start_date
+    while current_date <= end_date:
+        if is_workday(current_date):
+            workdays += 1
+        current_date += timedelta(days=1)
+    return workdays
 
 def render_dashboard():
     user = st.session_state.data["users"][st.session_state.current_user]
     
-    st.title(f"Welcome, {user['name']}")
-    st.caption(f"Role: {user['role'].title()} | Department: {user['department']}")
+    st.title("Welcome, " + user['name'])
+    st.caption("Role: " + user['role'].title() + " | Department: " + user['department'])
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -170,13 +132,14 @@ def render_dashboard():
                     if req["employeeId"] == st.session_state.current_user]
     
     if user_requests:
-        for req in sorted(user_requests, key=lambda x: x["submittedAt"], reverse=True)[:3]:
-            with st.expander(f"{req['type'].title()} Leave - {req['status'].title()}"):
-                st.write(f"**Dates:** {', '.join([f\"{r['start']} to {r['end']}\" for r in req['ranges']])}")
-                st.write(f"**Reason:** {req['reason']}")
-                st.write(f"**Days:** {req['daysCalculation']['totalDeducted']}")
+        for req in user_requests:
+            with st.expander(req['type'].title() + " Leave - " + req['status'].title()):
+                st.write("**Start Date:** " + req['start_date'])
+                st.write("**End Date:** " + req['end_date'])
+                st.write("**Reason:** " + req['reason'])
+                st.write("**Days:** " + str(req['total_days']))
                 if req.get("managerComments"):
-                    st.write(f"**Manager Comments:** {req['managerComments']}")
+                    st.write("**Manager Comments:** " + req['managerComments'])
     else:
         st.info("No leave requests found. Click 'Plan Leave' to create your first request!")
 
@@ -194,17 +157,16 @@ def render_plan_leave():
         end_date = st.date_input("End Date", value=date.today())
     
     if start_date and end_date and start_date <= end_date:
-        ranges = [{"start": start_date.strftime("%Y-%m-%d"), "end": end_date.strftime("%Y-%m-%d")}]
-        calculation = calculate_leave_days(ranges, st.session_state.data["holidays"], st.session_state.data["settings"])
+        total_days = calculate_workdays(start_date, end_date)
         
         st.subheader("Leave Calculation")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Workdays", calculation["workdays"])
+            st.metric("Total Days", (end_date - start_date).days + 1)
         with col2:
-            st.metric("Bridge Days", calculation["bridgeDays"])
+            st.metric("Workdays", total_days)
         with col3:
-            st.metric("Total Deducted", calculation["totalDeducted"])
+            st.metric("Weekends", (end_date - start_date).days + 1 - total_days)
         
         leave_type = st.selectbox("Leave Type", 
                                  options=[lt["id"] for lt in st.session_state.data["settings"]["leaveTypes"]],
@@ -214,21 +176,22 @@ def render_plan_leave():
         
         if st.button("Submit Leave Request"):
             if reason.strip():
-                request_id = f"req_{uuid.uuid4().hex[:8]}"
+                request_id = "req_" + uuid.uuid4().hex[:8]
                 new_request = {
                     "id": request_id,
                     "employeeId": st.session_state.current_user,
                     "status": "pending",
                     "type": leave_type,
-                    "ranges": ranges,
+                    "start_date": start_date.strftime("%Y-%m-%d"),
+                    "end_date": end_date.strftime("%Y-%m-%d"),
                     "reason": reason,
-                    "daysCalculation": calculation,
+                    "total_days": total_days,
                     "submittedAt": datetime.now().isoformat(),
                     "managerComments": ""
                 }
                 
                 st.session_state.data["leaveRequests"][request_id] = new_request
-                user["leaveBalance"][leave_type]["pending"] += calculation["totalDeducted"]
+                user["leaveBalance"][leave_type]["pending"] += total_days
                 
                 st.success("Leave request submitted successfully!")
                 st.rerun()
@@ -245,32 +208,30 @@ def render_my_requests():
         st.info("You haven't submitted any leave requests yet.")
         return
     
-    for req in sorted(user_requests, key=lambda x: x["submittedAt"], reverse=True):
+    for req in user_requests:
         status_color = {
             "pending": "🟠", 
             "approved": "🟢",
             "rejected": "🔴"
         }.get(req["status"], "⚪")
         
-        with st.expander(f"{status_color} {req['type'].title()} Leave - {req['status'].title()}"):
+        with st.expander(status_color + " " + req['type'].title() + " Leave - " + req['status'].title()):
             col1, col2 = st.columns(2)
             
             with col1:
-                st.write(f"**Request ID:** {req['id']}")
-                st.write(f"**Type:** {req['type'].title()}")
-                st.write(f"**Status:** {req['status'].title()}")
-                st.write(f"**Submitted:** {req['submittedAt'][:10]}")
+                st.write("**Request ID:** " + req['id'])
+                st.write("**Type:** " + req['type'].title())
+                st.write("**Status:** " + req['status'].title())
+                st.write("**Submitted:** " + req['submittedAt'][:10])
             
             with col2:
-                st.write(f"**Total Days:** {req['daysCalculation']['totalDeducted']}")
-                st.write(f"**Reason:** {req['reason']}")
-            
-            st.write("**Date Ranges:**")
-            for range_data in req["ranges"]:
-                st.write(f"• {range_data['start']} to {range_data['end']}")
+                st.write("**Start Date:** " + req['start_date'])
+                st.write("**End Date:** " + req['end_date'])
+                st.write("**Total Days:** " + str(req['total_days']))
+                st.write("**Reason:** " + req['reason'])
             
             if req.get("managerComments"):
-                st.info(f"**Manager Comments:** {req['managerComments']}")
+                st.info("**Manager Comments:** " + req['managerComments'])
 
 def render_team_view():
     st.title("👥 Team View")
@@ -291,39 +252,37 @@ def render_team_view():
                        req["employeeId"] in [member["id"] for member in team_members]]
     
     if pending_requests:
-        st.subheader(f"🔔 Pending Approvals ({len(pending_requests)})")
+        st.subheader("🔔 Pending Approvals (" + str(len(pending_requests)) + ")")
         
         for req in pending_requests:
             employee = st.session_state.data["users"][req["employeeId"]]
             
-            with st.expander(f"{employee['name']} - {req['type'].title()} Leave"):
+            with st.expander(employee['name'] + " - " + req['type'].title() + " Leave"):
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    st.write(f"**Employee:** {employee['name']}")
-                    st.write(f"**Department:** {employee['department']}")
-                    st.write(f"**Leave Type:** {req['type'].title()}")
-                    st.write(f"**Total Days:** {req['daysCalculation']['totalDeducted']}")
+                    st.write("**Employee:** " + employee['name'])
+                    st.write("**Department:** " + employee['department'])
+                    st.write("**Leave Type:** " + req['type'].title())
+                    st.write("**Total Days:** " + str(req['total_days']))
                 
                 with col2:
-                    st.write(f"**Submitted:** {req['submittedAt'][:10]}")
-                    st.write(f"**Reason:** {req['reason']}")
-                
-                st.write("**Date Ranges:**")
-                for range_data in req["ranges"]:
-                    st.write(f"• {range_data['start']} to {range_data['end']}")
+                    st.write("**Start Date:** " + req['start_date'])
+                    st.write("**End Date:** " + req['end_date'])
+                    st.write("**Submitted:** " + req['submittedAt'][:10])
+                    st.write("**Reason:** " + req['reason'])
                 
                 st.markdown("---")
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    if st.button(f"✅ Approve", key=f"approve_{req['id']}"):
+                    if st.button("✅ Approve", key="approve_" + req['id']):
                         approve_request(req["id"], "")
                         st.success("Request approved!")
                         st.rerun()
                 
                 with col2:
-                    if st.button(f"❌ Reject", key=f"reject_{req['id']}"):
+                    if st.button("❌ Reject", key="reject_" + req['id']):
                         reject_request(req["id"], "Request rejected by manager")
                         st.success("Request rejected!")
                         st.rerun()
@@ -339,8 +298,8 @@ def approve_request(request_id, comments):
     req["approvedBy"] = st.session_state.current_user
     req["approvedAt"] = datetime.now().isoformat()
     
-    employee["leaveBalance"][req["type"]]["used"] += req["daysCalculation"]["totalDeducted"]
-    employee["leaveBalance"][req["type"]]["pending"] -= req["daysCalculation"]["totalDeducted"]
+    employee["leaveBalance"][req["type"]]["used"] += req["total_days"]
+    employee["leaveBalance"][req["type"]]["pending"] -= req["total_days"]
 
 def reject_request(request_id, comments):
     req = st.session_state.data["leaveRequests"][request_id]
@@ -351,17 +310,19 @@ def reject_request(request_id, comments):
     req["approvedBy"] = st.session_state.current_user
     req["approvedAt"] = datetime.now().isoformat()
     
-    employee["leaveBalance"][req["type"]]["pending"] -= req["daysCalculation"]["totalDeducted"]
+    employee["leaveBalance"][req["type"]]["pending"] -= req["total_days"]
 
 def render_role_switcher():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔄 Demo Role Switcher")
     
     users = st.session_state.data["users"]
-    user_options = {f"{user['name']} ({user['role']})": user_id 
-                   for user_id, user in users.items()}
+    user_options = {}
+    for user_id, user in users.items():
+        user_options[user['name'] + " (" + user['role'] + ")"] = user_id
     
-    current_selection = f"{users[st.session_state.current_user]['name']} ({users[st.session_state.current_user]['role']})"
+    current_user_data = users[st.session_state.current_user]
+    current_selection = current_user_data['name'] + " (" + current_user_data['role'] + ")"
     
     selected_user = st.sidebar.selectbox(
         "Switch User Role:",
@@ -420,14 +381,12 @@ def main():
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📊 System Info")
-    st.sidebar.info(f"""
-    **Current User:** {user['name']}  
-    **Role:** {user['role'].title()}  
-    **Department:** {user['department']}
-    
-    **Weekend Bridging:** {'✅' if st.session_state.data['settings']['weekendBridging'] else '❌'}  
-    **Exclude Holidays:** {'✅' if st.session_state.data['settings']['excludeHolidays'] else '❌'}
-    """)
+    user_info = "**Current User:** " + user['name'] + "  \n"
+    user_info += "**Role:** " + user['role'].title() + "  \n"
+    user_info += "**Department:** " + user['department'] + "\n\n"
+    user_info += "**Weekend Bridging:** ✅  \n"
+    user_info += "**Exclude Holidays:** ✅"
+    st.sidebar.info(user_info)
 
 if __name__ == "__main__":
     main()
