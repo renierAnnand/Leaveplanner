@@ -1,114 +1,4 @@
 import streamlit as st
-  
-    # Team calendar overview
-    st.markdown("---")
-    st.subheader("📅 Team Leave Calendar")
-  
-    approved_requests = [req for req in st.session_state.data["leaveRequests"].values() 
-                        if req["status"] == "approved" and 
-                        req["employeeId"] in [member["id"] for member in team_members]]
-  
-    if approved_requests:
-        calendar_data = []
-        for req in approved_requests:
-            employee = st.session_state.data["users"][req["employeeId"]]
-            for range_data in req["ranges"]:
-                calendar_data.append({
-                    "Employee": employee["name"],
-                    "Department": employee["department"],
-                    "Start Date": range_data["start"],
-                    "End Date": range_data["end"],
-                    "Leave Type": req["type"].title(),
-                    "Days": req["daysCalculation"]["totalDeducted"]
-                })
-      
-        df = pd.DataFrame(calendar_data)
-        st.dataframe(df, use_container_width=True)
-      
-        # Summary stats
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Approved Leaves", len(approved_requests))
-        with col2:
-            total_days = sum(req["daysCalculation"]["totalDeducted"] for req in approved_requests)
-            st.metric("Total Days Approved", total_days)
-        with col3:
-            departments = len(set(st.session_state.data["users"][req["employeeId"]]["department"] 
-                                for req in approved_requests))
-            st.metric("Departments Affected", departments)
-    else:
-        st.info("No approved leaves to display.")
-
-def approve_request(request_id, comments):
-    """Approve a leave request"""
-    req = st.session_state.data["leaveRequests"][request_id]
-    employee = st.session_state.data["users"][req["employeeId"]]
-  
-    # Update request status
-    req["status"] = "approved"
-    req["managerComments"] = comments
-    req["approvedBy"] = st.session_state.current_user
-    req["approvedAt"] = datetime.now().isoformat()
-  
-    # Update employee balance
-    employee["leaveBalance"][req["type"]]["used"] += req["daysCalculation"]["totalDeducted"]
-    employee["leaveBalance"][req["type"]]["pending"] -= req["daysCalculation"]["totalDeducted"]
-
-def reject_request(request_id, comments):
-    """Reject a leave request"""
-    req = st.session_state.data["leaveRequests"][request_id]
-    employee = st.session_state.data["users"][req["employeeId"]]
-  
-    # Update request status
-    req["status"] = "rejected"
-    req["managerComments"] = comments
-    req["approvedBy"] = st.session_state.current_user
-    req["approvedAt"] = datetime.now().isoformat()
-  
-    # Return pending balance
-    employee["leaveBalance"][req["type"]]["pending"] -= req["daysCalculation"]["totalDeducted"]
-
-def render_settings():
-    """Render settings page"""
-    st.title("⚙️ Settings")
-  
-    user = st.session_state.data["users"][st.session_state.current_user]
-  
-    # Personal Settings
-    st.subheader("👤 Personal Settings")
-  
-    with st.expander("Leave Balance Management"):
-        st.write("Update your annual leave balance:")
-      
-        for leave_type in st.session_state.data["settings"]["leaveTypes"]:
-            current_balance = user["leaveBalance"].get(leave_type["id"], {"total": 0, "used": 0, "pending": 0})
-          
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**{leave_type['name']}**")
-            with col2:
-                new_total = st.number_input(
-                    f"Total {leave_type['name']} Days",
-                    min_value=0,
-                    value=current_balance["total"],
-                    key=f"balance_{leave_type['id']}"
-                )
-              
-                if new_total != current_balance["total"]:
-                    if st.button(f"Update {leave_type['name']}", key=f"update_{leave_type['id']}"):
-                        user["leaveBalance"][leave_type["id"]]["total"] = new_total
-                        st.success(f"{leave_type['name']} balance updated!")
-                        st.rerun()
-  
-    # System Settings (Admin only)
-    if user["role"] == "admin":
-        st.markdown("---")
-        st.subheader("🔧 System Settings")
-      
-        with st.expander("Workweek Configuration"):
-            st.write("Configure the standard workweek:")
-          
-            days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
             current_settings = st.session_state.data["settings"]
           
             workweek_start = st.selectbox("Workweek Start", days, 
@@ -120,4 +10,107 @@ def render_settings():
                                          value=current_settings["weekendBridging"])
             exclude_holidays = st.checkbox("Exclude Holidays from Leave Count",
                                          value=current_settings["excludeHolidays"])
+          
+            if st.button("Update Workweek Settings"):
+                current_settings["workweek"]["start"] = days.index(workweek_start)
+                current_settings["workweek"]["end"] = days.index(workweek_end)
+                current_settings["weekendBridging"] = weekend_bridging
+                current_settings["excludeHolidays"] = exclude_holidays
+                st.success("Workweek settings updated!")
+                st.rerun()
+      
+        with st.expander("Holiday Management"):
+            st.write("Manage public holidays:")
+          
+            holidays_df = pd.DataFrame(st.session_state.data["holidays"])
+            st.dataframe(holidays_df, use_container_width=True)
+          
+            st.write("Add New Holiday:")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                new_holiday_date = st.date_input("Holiday Date")
+            with col2:
+                new_holiday_name = st.text_input("Holiday Name")
+            with col3:
+                new_holiday_type = st.selectbox("Holiday Type", ["public", "religious", "national"])
+          
+            if st.button("Add Holiday"):
+                if new_holiday_name:
+                    new_holiday = {
+                        "date": new_holiday_date.strftime("%Y-%m-%d"),
+                        "name": new_holiday_name,
+                        "type": new_holiday_type
+                    }
+                    st.session_state.data["holidays"].append(new_holiday)
+                    st.success("Holiday added!")
+                    st.rerun()
+
+def render_role_switcher():
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔄 Demo Role Switcher")
+  
+    users = st.session_state.data["users"]
+    user_options = {f"{user['name']} ({user['role']})": user_id 
+                   for user_id, user in users.items()}
+  
+    current_selection = f"{users[st.session_state.current_user]['name']} ({users[st.session_state.current_user]['role']})"
+  
+    selected_user = st.sidebar.selectbox(
+        "Switch User Role:",
+        options=list(user_options.keys()),
+        index=list(user_options.keys()).index(current_selection)
+    )
+  
+    if user_options[selected_user] != st.session_state.current_user:
+        st.session_state.current_user = user_options[selected_user]
+        st.session_state.selected_ranges = []
+        st.session_state.temp_range_start = None
+        st.rerun()
+
+def main():
+    st.set_page_config(
+        page_title="Leave Planning System",
+        page_icon="📅",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+  
+    init_session_state()
+  
+    if 'page' not in st.session_state:
+        st.session_state.page = 'dashboard'
+  
+    render_role_switcher()
+  
+    user = st.session_state.data["users"][st.session_state.current_user]
+  
+    st.sidebar.markdown("## 🧭 Navigation")
+  
+    nav_options = ["Dashboard", "Plan Leave", "My Requests"]
+    if user["role"] in ["manager", "admin"]:
+        nav_options.append("Team View")
+    nav_options.append("Settings")
+  
+    selected_page = st.sidebar.radio("Go to:", nav_options)
+  
+    page_mapping = {
+        "Dashboard": "dashboard",
+        "Plan Leave": "plan_leave", 
+        "My Requests": "my_requests",
+        "Team View": "team_view",
+        "Settings": "settings"
+    }
+  
+    if page_mapping[selected_page] != st.session_state.page:
+        st.session_state.page = page_mapping[selected_page]
+        st.rerun()
+  
+    if st.session_state.page == "dashboard":
+        render_dashboard()
+    elif st.session_state.page == "plan_leave":
+        render_plan_leave()
+    elif st.session_state.page == "my_requests":
+        render_my_requests()
+    elif st.session_state.page == "team_view":
+        render_team_view()
     main()
